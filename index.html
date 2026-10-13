@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenChat</title>
+  <style>
+    :root { color-scheme: light; --accent:#2563eb; --bg:#f3f6fb; --ink:#172033; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+    .app { width:min(900px,100%); margin:0 auto; min-height:100vh; padding:20px; display:flex; flex-direction:column; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    h1 { font-size:1.45rem; margin:0; } .sub { color:#667085; font-size:.9rem; margin-top:3px; }
+    .status { display:flex; align-items:center; gap:7px; font-size:.85rem; color:#475467; }
+    .dot { width:9px; height:9px; border-radius:50%; background:#98a2b3; }
+    .dot.online { background:#12b76a; }
+    .setup, .chat { background:white; border:1px solid #e4e7ec; border-radius:16px; box-shadow:0 8px 30px #1018280b; }
+    .setup { padding:14px; display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin-bottom:14px; }
+    label { display:block; font-size:.8rem; font-weight:650; color:#475467; margin:0 0 5px; }
+    .field { flex:1 1 150px; }
+    input { width:100%; padding:11px 12px; border:1px solid #d0d5dd; border-radius:9px; font:inherit; outline:none; }
+    input:focus { border-color:var(--accent); box-shadow:0 0 0 3px #2563eb20; }
+    button { border:0; border-radius:9px; padding:11px 15px; background:var(--accent); color:white; font:inherit; font-weight:650; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .chat { display:flex; flex-direction:column; flex:1; min-height:430px; overflow:hidden; }
+    .chat-top { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 17px; border-bottom:1px solid #eaecf0; }
+    .room-title { font-weight:750; } .small { color:#667085; font-size:.85rem; }
+    #messages { list-style:none; padding:18px; margin:0; display:flex; flex-direction:column; gap:12px; flex:1; overflow-y:auto; min-height:300px; }
+    .message { max-width:82%; align-self:flex-start; background:#f2f4f7; padding:10px 12px; border-radius:12px 12px 12px 3px; overflow-wrap:anywhere; }
+    .message.mine { align-self:flex-end; background:#e8efff; border-radius:12px 12px 3px 12px; }
+    .meta { font-size:.75rem; color:#667085; margin-bottom:4px; }
+    .body { white-space:pre-wrap; line-height:1.4; }
+    .notice { text-align:center; color:#667085; font-size:.8rem; padding:4px 10px; }
+    .composer { display:flex; gap:9px; padding:14px; border-top:1px solid #eaecf0; }
+    .composer input { flex:1; min-width:0; }
+    footer { color:#667085; font-size:.8rem; padding:12px 2px 0; line-height:1.45; }
+    @media (max-width:560px) { .app{padding:12px}.chat{min-height:60vh}.message{max-width:94%} header{align-items:flex-start;flex-direction:column} }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div><h1>💬 OpenChat</h1><div class="sub">A simple live chat room for people on different computers</div></div>
+      <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">Not connected</span></div>
+    </header>
+
+    <section class="setup" aria-label="Chat settings">
+      <div class="field"><label for="username">Your display name</label><input id="username" maxlength="24" placeholder="e.g. Alex" /></div>
+      <div class="field"><label for="room">Room name</label><input id="room" maxlength="40" value="lobby" placeholder="e.g. friends" /></div>
+      <button id="connectBtn">Join chat</button>
+    </section>
+
+    <section class="chat">
+      <div class="chat-top">
+        <div><div class="room-title"># <span id="roomLabel">lobby</span></div><div class="small">Messages are live while you are connected.</div></div>
+        <div class="small" id="peopleCount">0 connected</div>
+      </div>
+      <ul id="messages" aria-live="polite"><li class="notice">Choose a name and join a room to start chatting.</li></ul>
+      <form class="composer" id="messageForm">
+        <input id="messageInput" maxlength="1000" placeholder="Write a message…" autocomplete="off" disabled />
+        <button id="sendBtn" type="submit" disabled>Send</button>
+      </form>
+    </section>
+    <footer>
+      This starter app does not save chat history. Anyone who knows a room name can join it, so don't share passwords or private information. For public internet use, deploy behind HTTPS/WSS and add authentication and moderation.
+    </footer>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    let socket = null, myName = "", currentRoom = "lobby";
+    const setStatus = (text, online=false) => {
+      $("statusText").textContent = text;
+      $("statusDot").classList.toggle("online", online);
+    };
+    function addNotice(text) {
+      const li = document.createElement("li");
+      li.className = "notice"; li.textContent = text; $("messages").appendChild(li);
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+    function addMessage(msg) {
+      const li = document.createElement("li");
+      li.className = "message" + (msg.username === myName ? " mine" : "");
+      const meta = document.createElement("div"); meta.className = "meta";
+      const time = new Date(msg.timestamp || Date.now()).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      meta.textContent = `${msg.username} · ${time}`;
+      const body = document.createElement("div"); body.className = "body";
+      body.textContent = msg.text;
+      li.append(meta, body); $("messages").appendChild(li);
+      $("messages").scrollTop = $("messages").scrollHeight;
+    }
+    function connect() {
+      myName = $("username").value.trim().slice(0,24) || "Guest";
+      currentRoom = $("room").value.trim().replace(/[^a-zA-Z0-9 _-]/g, "").slice(0,40) || "lobby";
+      $("roomLabel").textContent = currentRoom;
+      if (socket) { socket.close(); socket = null; }
+      $("messages").replaceChildren();
+      setStatus("Connecting…");
+      // The server serves this page and the WebSocket endpoint on the same host.
+      const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(`${scheme}//${location.host}`);
+      socket.addEventListener("open", () => {
+        socket.send(JSON.stringify({type:"join", username:myName, room:currentRoom}));
+      });
+      socket.addEventListener("message", event => {
+        let data; try { data = JSON.parse(event.data); } catch { return; }
+        if (data.type === "joined") {
+          setStatus("Connected", true);
+          $("messageInput").disabled = false; $("sendBtn").disabled = false;
+          $("connectBtn").textContent = "Rejoin"; $("peopleCount").textContent = `${data.count} connected`;
+          addNotice(`You joined #${currentRoom}.`);
+          $("messageInput").focus();
+        } else if (data.type === "message") addMessage(data);
+        else if (data.type === "notice") addNotice(data.text);
+        else if (data.type === "count") $("peopleCount").textContent = `${data.count} connected`;
+        else if (data.type === "error") addNotice(data.text);
+      });
+      socket.addEventListener("close", () => {
+        setStatus("Disconnected"); $("messageInput").disabled = true; $("sendBtn").disabled = true;
+      });
+      socket.addEventListener("error", () => setStatus("Connection error"));
+    }
+    $("connectBtn").addEventListener("click", connect);
+    $("messageForm").addEventListener("submit", event => {
+      event.preventDefault();
+      const text = $("messageInput").value.trim();
+      if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({type:"message", text}));
+      $("messageInput").value = ""; $("messageInput").focus();
+    });
+    $("room").addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+    $("username").addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+  </script>
+</body>
+</html>
